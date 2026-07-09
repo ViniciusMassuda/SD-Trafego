@@ -1,0 +1,83 @@
+networks:
+  subrede_esquerda:
+    ipam:
+      config:
+        - subnet: 192.168.120.0/24
+  subrede_direita:
+    ipam:
+      config:
+        - subnet: 192.168.130.0/24
+  rede_controle:
+    ipam:
+      config:
+        - subnet: 192.168.140.0/24
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq_broker
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - subrede_esquerda
+      - subrede_direita
+      - rede_controle
+
+  sensor_a:
+    image: nicolaka/netshoot
+    container_name: sensor_a
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - subrede_esquerda
+
+  sensor_b:
+    image: nicolaka/netshoot
+    container_name: sensor_b
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - subrede_direita
+
+  semaforo_1:
+    image: nicolaka/netshoot
+    container_name: semaforo_1
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    networks:
+      rede_controle:
+        ipv4_address: 192.168.140.11
+  
+  semaforo_2:
+    image: nicolaka/netshoot
+    container_name: semaforo_2
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    networks:
+      rede_controle:
+        ipv4_address: 192.168.140.12
+
+  semaforo_3:
+    image: nicolaka/netshoot
+    container_name: semaforo_3
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    networks:
+      rede_controle:
+        ipv4_address: 192.168.140.13
+
+  semaforo_4:
+    image: nicolaka/netshoot
+    container_name: semaforo_4
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    networks:
+      rede_controle:
+        ipv4_address: 192.168.140.14
