@@ -25,22 +25,30 @@ services:
       - rede_controle
 
   sensor_a:
-    image: nicolaka/netshoot
+    build: 
+      context: .
+      dockerfile: Dockerfile.sensor
     container_name: sensor_a
-    command: sleep infinity
+    command: python sensor.py --id sensor_a --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
       - subrede_esquerda
+    depends_on:
+      - rabbitmq
 
   sensor_b:
-    image: nicolaka/netshoot
+    build: 
+      context: .
+      dockerfile: Dockerfile.sensor
     container_name: sensor_b
-    command: sleep infinity
+    command: python sensor.py --id sensor_b --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
       - subrede_direita
+    depends_on:
+      - rabbitmq
 
   semaforo_1:
     image: nicolaka/netshoot

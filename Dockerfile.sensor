@@ -1,0 +1,7 @@
+FROM python:3.9-slim
+# instala as ferramentas de rede (tc, ping, iptables) para os scripts de caos funcionarem
+RUN apt-get update && apt-get install -y iproute2 iptables iputils-ping
+RUN pip install pika
+WORKDIR /app
+COPY sensor.py .
+CMD ["python", "sensor.py"]

@@ -53,3 +53,46 @@ Passo 2 (Validar): Executar rapidamente o comando abaixo para ver que o semaforo
 docker ps
 
 Passo 3 (Recuperação): Aguarde alguns segundos e execute docker ps novamente. O Docker terá reiniciado o contêiner de forma automática, permitindo que ele recupere seu estado salvo.
+
+---
+
+## Módulo 2: Ordenação Causal e Sincronização Lógica (Lamport)
+
+Este módulo resolve o problema introduzido pelo Cenário A de Caos (Latência extrema e perda de pacotes). Em sistemas distribuídos assíncronos não existe relógio global, o que faria eventos de tráfego chegarem desordenados e causarem processamentos incorretos nos semáforos.
+
+### Tecnologias Utilizadas
+
+* Python 3 (`pika`) e Multithreading (`Lock`).
+* Relógios Lógicos de Lamport.
+
+### Como Validar a Prova de Ordenação Causal (Critério 2)
+
+1. Instale as dependências locais:
+
+```bash
+pip install pika
+
+```
+
+2. Suba o cluster recriando os sensores com a imagem python via:
+
+```bash
+docker compose up -d --build
+
+```
+
+3. Inicie o observador no seu terminal local (Host):
+
+```bash
+python observador.py
+
+```
+
+4. Em outro terminal, injete latência flutuante severa (10ms a 4000ms):
+
+```bash
+python injetar_latencia.py
+
+```
+
+5. **Comprovação:** Observe o terminal do `observador.py`. Você notará que o print `[REDE] Pacote físico chegou` acusará que mensagens mais recentes estão ultrapassando mensagens mais antigas na rede física. No entanto, a cada 10 segundos, o buffer é descarregado e o quadro `[PROVA DA ORDENAÇÃO CAUSAL]` reconstrói a sequência histórica perfeita utilizando a assinatura lógica (L=X) embutida pelos sensores, provando a resiliência do algoritmo.
