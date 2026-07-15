@@ -1,0 +1,9 @@
+FROM python:3.9-slim
+# Mesmas ferramentas de rede do Dockerfile.sensor (tc, ping, iptables):
+# criar_partição.sh/curar_partição.sh (Módulo 1) rodam "iptables" diretamente
+# dentro destes contêineres, então a imagem precisa ter o binário disponível.
+RUN apt-get update && apt-get install -y iproute2 iptables iputils-ping
+RUN pip install pika
+WORKDIR /app
+COPY semaforo.py .
+CMD ["python", "semaforo.py"]

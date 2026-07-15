@@ -51,41 +51,57 @@ services:
       - rabbitmq
 
   semaforo_1:
-    image: nicolaka/netshoot
+    build:
+      context: .
+      dockerfile: Dockerfile.semaforo
     container_name: semaforo_1
-    command: sleep infinity
+    command: python semaforo.py --id 1 --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
       rede_controle:
         ipv4_address: 192.168.140.11
-  
+    depends_on:
+      - rabbitmq
+
   semaforo_2:
-    image: nicolaka/netshoot
+    build:
+      context: .
+      dockerfile: Dockerfile.semaforo
     container_name: semaforo_2
-    command: sleep infinity
+    command: python semaforo.py --id 2 --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
       rede_controle:
         ipv4_address: 192.168.140.12
+    depends_on:
+      - rabbitmq
 
   semaforo_3:
-    image: nicolaka/netshoot
+    build:
+      context: .
+      dockerfile: Dockerfile.semaforo
     container_name: semaforo_3
-    command: sleep infinity
+    command: python semaforo.py --id 3 --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
       rede_controle:
         ipv4_address: 192.168.140.13
+    depends_on:
+      - rabbitmq
 
   semaforo_4:
-    image: nicolaka/netshoot
+    build:
+      context: .
+      dockerfile: Dockerfile.semaforo
     container_name: semaforo_4
-    command: sleep infinity
+    command: python semaforo.py --id 4 --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
       rede_controle:
         ipv4_address: 192.168.140.14
+    depends_on:
+      - rabbitmq
