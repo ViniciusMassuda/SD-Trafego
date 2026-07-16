@@ -4,6 +4,7 @@ import json
 import time
 import argparse
 import pika
+import os
 
 
 NOS_CONFIG = {
@@ -33,6 +34,28 @@ class SemaforoNode:
         self.alcancaveis = {i: False for i in self.pares}
         self.eleicao_em_andamento = False
         self.momento_ultima_eleicao = 0.0
+        self.historico = []
+        self.carregar_checkpoint()
+
+    def carregar_checkpoint(self):
+        arquivo = f"checkpoint_{self.meu_id}.json"
+        if os.path.exists(arquivo):
+            try:
+                with open(arquivo, 'r') as f:
+                    dados = json.load(f)
+                    self.estado = dados.get("estado", "FOLLOWER")
+                    self.historico = dados.get("historico", [])
+                    print(f"[semaforo_{self.meu_id}] [CHECKPOINT RECUPERADO] Estado: {self.estado} | Eventos Histórico: {len(self.historico)}")
+            except Exception as e:
+                print(f"[semaforo_{self.meu_id}] Erro ao carregar checkpoint: {e}")
+
+    def salvar_checkpoint(self):
+        arquivo = f"checkpoint_{self.meu_id}.json"
+        try:
+            with open(arquivo, 'w') as f:
+                json.dump({"estado": self.estado, "historico": self.historico}, f)
+        except Exception as e:
+            print(f"[semaforo_{self.meu_id}] Erro ao salvar checkpoint: {e}")
 
     def iniciar_servidor_controle(self):
         servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -118,6 +141,7 @@ class SemaforoNode:
         while True:
             tinha_quorum_antes = self.estado != "SEGURANCA"
             nos_visiveis = self._contar_nos_visiveis()
+            print(f"[semaforo_{self.meu_id}] [HEARTBEAT] Verificando nós vivos. Visíveis: {nos_visiveis}/{TOTAL_NOS}")
 
             if nos_visiveis < QUORUM_MINIMO:
                 with self.lock:
@@ -125,6 +149,7 @@ class SemaforoNode:
                     self.estado = "SEGURANCA"
                     self.lider_atual = None
                 if tinha_quorum_antes:
+                    self.salvar_checkpoint()
                     extra = "Abandonando a liderança. " if era_lider else ""
                     print(f"[semaforo_{self.meu_id}] [QUORUM PERDIDO] Vejo {nos_visiveis}/{TOTAL_NOS} nós "
                           f"(mínimo exigido: {QUORUM_MINIMO}). {extra}"
@@ -136,6 +161,7 @@ class SemaforoNode:
                           f"Saindo do modo de segurança e disparando nova eleição.")
                     with self.lock:
                         self.estado = "FOLLOWER"
+                    self.salvar_checkpoint()
                     threading.Thread(target=self.iniciar_eleicao, daemon=True).start()
 
                 elif self.estado == "FOLLOWER" and self.lider_atual is not None:
@@ -203,6 +229,7 @@ class SemaforoNode:
         with self.lock:
             self.estado = "LEADER"
             self.lider_atual = self.meu_id
+        self.salvar_checkpoint()
         for pid in self.pares:
             self._enviar_mensagem(pid, "COORDINATOR", espera_resposta=False)
         print(f"[semaforo_{self.meu_id}] >>> EU SOU O LÍDER (semaforo_{self.meu_id}) <<<")
@@ -230,12 +257,33 @@ class SemaforoNode:
                     with self.lock:
                         sou_lider = self.estado == "LEADER"
                         estado_atual = self.estado
+                        
+                    if evento.get("tipo") == "TIME_REQUEST":
+                        if sou_lider:
+                            resp = {
+                                "tipo": "TIME_RESPONSE",
+                                "sensor_id": evento["sensor_id"],
+                                "t0": evento["t0"],
+                                "t_server": time.time()
+                            }
+                            print(f"[semaforo_{self.meu_id}][CRISTIAN SERVER] Ajustando tempo para o {evento['sensor_id']}")
+                            canal.basic_publish(exchange='trafego_events', routing_key='', body=json.dumps(resp))
+                        return
+                        
+                    if evento.get("tipo") == "TIME_RESPONSE":
+                        return 
+                        
+                    with self.lock:
+                        self.historico.append(evento)
+                        self.salvar_checkpoint()
+
                     if sou_lider:
-                        print(f"[semaforo_{self.meu_id}][LÍDER] Evento de {evento['sensor_id']} "
-                              f"(L={evento['lamport_clock']}): {evento['evento']} -> decisão de controle aplicada.")
+                        ts = evento.get('timestamp_real', 0)
+                        print(f"[semaforo_{self.meu_id}][LÍDER] Evento de {evento.get('sensor_id')} "
+                              f"(L={evento.get('lamport_clock')}, T_sync={ts:.2f}): {evento.get('evento')} -> decisão de controle aplicada.")
                     else:
-                        print(f"[semaforo_{self.meu_id}][{estado_atual}] Evento recebido de {evento['sensor_id']} "
-                              f"(L={evento['lamport_clock']}) — não sou coordenador, apenas observando.")
+                        print(f"[semaforo_{self.meu_id}][{estado_atual}] Evento recebido de {evento.get('sensor_id')} "
+                              f"(L={evento.get('lamport_clock')}) — não sou coordenador, apenas observando.")
 
                 canal.basic_consume(queue=nome_fila, on_message_callback=callback, auto_ack=True)
                 canal.start_consuming()
