@@ -29,7 +29,7 @@ services:
       context: .
       dockerfile: Dockerfile.sensor
     container_name: sensor_a
-    command: python sensor.py --id sensor_a --broker rabbitmq
+    command: python -u sensor.py --id sensor_a --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
@@ -42,7 +42,7 @@ services:
       context: .
       dockerfile: Dockerfile.sensor
     container_name: sensor_b
-    command: python sensor.py --id sensor_b --broker rabbitmq
+    command: python -u sensor.py --id sensor_b --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
@@ -56,7 +56,7 @@ services:
       dockerfile: Dockerfile.semaforo
     container_name: semaforo_1
     restart: always
-    command: python semaforo.py --id 1 --broker rabbitmq
+    command: python -u semaforo.py --id 1 --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
@@ -71,7 +71,7 @@ services:
       dockerfile: Dockerfile.semaforo
     container_name: semaforo_2
     restart: always
-    command: python semaforo.py --id 2 --broker rabbitmq
+    command: python -u semaforo.py --id 2 --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
@@ -86,7 +86,7 @@ services:
       dockerfile: Dockerfile.semaforo
     container_name: semaforo_3
     restart: always
-    command: python semaforo.py --id 3 --broker rabbitmq
+    command: python -u semaforo.py --id 3 --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:
@@ -101,7 +101,7 @@ services:
       dockerfile: Dockerfile.semaforo
     container_name: semaforo_4
     restart: always
-    command: python semaforo.py --id 4 --broker rabbitmq
+    command: python -u semaforo.py --id 4 --broker rabbitmq
     cap_add:
       - NET_ADMIN
     networks:

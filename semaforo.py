@@ -7,6 +7,8 @@ import pika
 import os
 
 
+# Configuração dos outros nós que participam do cluster.
+# Basicamente, a ideia é manter uma visão fixa de quem existe no sistema.
 NOS_CONFIG = {
     1: "192.168.140.11",
     2: "192.168.140.12",
@@ -15,6 +17,8 @@ NOS_CONFIG = {
 }
 PORTA_CONTROLE = 9999
 TOTAL_NOS = len(NOS_CONFIG)
+# Quórum mínimo: em um sistema de consenso, precisa ter maioria para "acreditar"
+# que a decisão está consistente. Aqui o cálculo é simples: metade + 1.
 QUORUM_MINIMO = TOTAL_NOS // 2 + 1  
 
 TIMEOUT_SOCKET = 2.0               
@@ -35,6 +39,7 @@ class SemaforoNode:
         self.eleicao_em_andamento = False
         self.momento_ultima_eleicao = 0.0
         self.historico = []
+        self.buffer_eventos = []
         self.carregar_checkpoint()
 
     def carregar_checkpoint(self):
@@ -181,6 +186,9 @@ class SemaforoNode:
             time.sleep(INTERVALO_MONITORAMENTO)
 
     def iniciar_eleicao(self):
+        # Algoritmo de eleição do tipo Bully.
+        # Se o nó perceba que o lider sumiu, ele tenta convocar eleição.
+        # Se existir algum nó com prioridade maior vivo, ele deixa esse nó assumir.
         with self.lock:
             if self.eleicao_em_andamento:
                 return
@@ -236,6 +244,45 @@ class SemaforoNode:
         with self.lock:
             self.eleicao_em_andamento = False
 
+    def processar_buffer_eventos(self):
+        # Aqui entra a parte mais "física" do sistema distribuído.
+        # Os eventos chegam em ordem de rede, mas não necessariamente em ordem lógica.
+        # Então a gente espera um pouquinho e, depois, ordena pelo relógio de Lamport.
+        DELAY_WINDOW = 5.0  # Janela de atraso físico para ordenação causal (latência máx é 4s)
+        while True:
+            time.sleep(0.5)
+            a_processar = []
+            with self.lock:
+                agora = time.time()
+                novos_eventos = []
+                for t_chegada, evento in self.buffer_eventos:
+                    if agora - t_chegada >= DELAY_WINDOW:
+                        a_processar.append(evento)
+                    else:
+                        novos_eventos.append((t_chegada, evento))
+                self.buffer_eventos = novos_eventos
+
+            if a_processar:
+                # Ordenação causal rigorosa pelo relógio de Lamport (e timestamp sincronizado como desempate)
+                a_processar.sort(key=lambda x: (x.get('lamport_clock', 0), x.get('timestamp_real', 0.0)))
+                
+                with self.lock:
+                    sou_lider = self.estado == "LEADER"
+                    estado_atual = self.estado
+                    
+                    for evento in a_processar:
+                        self.historico.append(evento)
+                    self.salvar_checkpoint()
+
+                for evento in a_processar:
+                    if sou_lider:
+                        ts = evento.get('timestamp_real', 0)
+                        print(f"[semaforo_{self.meu_id}][LÍDER] [PROCESSADO CAUSAL] Evento de {evento.get('sensor_id')} "
+                              f"(L={evento.get('lamport_clock')}, T_sync={ts:.2f}): {evento.get('evento')} -> decisão de controle aplicada.")
+                    else:
+                        print(f"[semaforo_{self.meu_id}][{estado_atual}] [PROCESSADO CAUSAL] Evento recebido de {evento.get('sensor_id')} "
+                              f"(L={evento.get('lamport_clock')}) — apenas registrado no histórico.")
+
     def consumir_eventos_trafego(self):
         parametros = pika.ConnectionParameters(
             host=self.broker_host,
@@ -274,16 +321,7 @@ class SemaforoNode:
                         return 
                         
                     with self.lock:
-                        self.historico.append(evento)
-                        self.salvar_checkpoint()
-
-                    if sou_lider:
-                        ts = evento.get('timestamp_real', 0)
-                        print(f"[semaforo_{self.meu_id}][LÍDER] Evento de {evento.get('sensor_id')} "
-                              f"(L={evento.get('lamport_clock')}, T_sync={ts:.2f}): {evento.get('evento')} -> decisão de controle aplicada.")
-                    else:
-                        print(f"[semaforo_{self.meu_id}][{estado_atual}] Evento recebido de {evento.get('sensor_id')} "
-                              f"(L={evento.get('lamport_clock')}) — não sou coordenador, apenas observando.")
+                        self.buffer_eventos.append((time.time(), evento))
 
                 canal.basic_consume(queue=nome_fila, on_message_callback=callback, auto_ack=True)
                 canal.start_consuming()
@@ -303,6 +341,7 @@ class SemaforoNode:
         time.sleep(2) 
         threading.Thread(target=self.monitorar_quorum, daemon=True).start()
         threading.Thread(target=self.iniciar_eleicao, daemon=True).start()
+        threading.Thread(target=self.processar_buffer_eventos, daemon=True).start()
 
         self.consumir_eventos_trafego()  
 

@@ -6,18 +6,33 @@ import random
 import argparse
 
 class SensorNode:
+    """Representa um sensor do sistema de tráfego.
+
+    O nodo tem dois papéis simples:
+    1. publica eventos de tráfego no broker;
+    2. tenta ajustar seu relógio local usando um protocolo de sincronização.
+
+    Em sistemas distribuídos, isso é meio confuso porque cada processo vê
+    o tempo de forma diferente, e o relógio local não é totalmente confiável.
+    """
+
     def __init__(self, sensor_id, broker_host):
         self.sensor_id = sensor_id
         self.broker_host = broker_host
         self.clock = 0
         self.lock = threading.Lock()
+        # Deriva artificial simulada para deixar o relógio local "um pouco diferente".
         self.drift_artificial = random.uniform(-10.0, 10.0)
         self.time_offset = 0.0
 
     def get_local_time(self):
+        # Relógio local do sensor, com uma deriva artificial só para simular
+        # o que acontece em um sistema real: cada nó tem seu próprio relógio.
         return time.time() + self.drift_artificial
 
     def get_synced_time(self):
+        # Quando o sensor já conseguiu estimar o offset, ele usa o relógio
+        # "sincronizado" para timestampar os eventos.
         return self.get_local_time() + self.time_offset
 
     def get_connection_and_channel(self):
@@ -57,74 +72,84 @@ class SensorNode:
         t_sync.join()
 
     def sync_time_cristian(self):
-        connection, channel = self.get_connection_and_channel()
+        # Aqui o sensor fica enviando pedidos de tempo para o broker.
+        # O semáforo, quando é líder, responde com o tempo do servidor.
+        # Depois disso, o sensor tenta fazer uma correção de relógio.
         while True:
-            time.sleep(5)
-            req = {
-                "tipo": "TIME_REQUEST",
-                "sensor_id": self.sensor_id,
-                "t0": self.get_local_time()
-            }
             try:
-                channel.basic_publish(exchange='trafego_events', routing_key='', body=json.dumps(req))
-            except Exception:
-                pass
+                connection, channel = self.get_connection_and_channel()
+                while True:
+                    time.sleep(5)
+                    req = {
+                        "tipo": "TIME_REQUEST",
+                        "sensor_id": self.sensor_id,
+                        "t0": self.get_local_time()
+                    }
+                    channel.basic_publish(exchange='trafego_events', routing_key='', body=json.dumps(req))
+            except Exception as e:
+                print(f"[{self.sensor_id}] Falha na sincronização de tempo: {e}. Tentando reconectar...")
+                time.sleep(2)
 
     def consume(self):
-        connection, channel = self.get_connection_and_channel()
-        
-        result = channel.queue_declare(queue='', exclusive=True)
-        queue_name = result.method.queue
-        channel.queue_bind(exchange='trafego_events', queue=queue_name)
-
-        def callback(ch, method, properties, body):
-            msg = json.loads(body)
-            if msg.get("tipo") == "TIME_RESPONSE" and msg.get("sensor_id") == self.sensor_id:
-                t1 = self.get_local_time()
-                t0 = msg["t0"]
-                t_server = msg["t_server"]
-                rtt = t1 - t0
-                estimated_server_time = t_server + (rtt / 2)
-                self.time_offset = estimated_server_time - t1
-                print(f"[{self.sensor_id}] [CRISTIAN] Tempo sincronizado. Offset aplicado = {self.time_offset:.3f} (RTT={rtt:.3f}s)")
-                return
-            
-            if msg.get("tipo") in ["TIME_REQUEST", "TIME_RESPONSE"]:
-                return
+        while True:
+            try:
+                connection, channel = self.get_connection_and_channel()
                 
-            if msg.get('sensor_id') != self.sensor_id and 'lamport_clock' in msg:
-                with self.lock:
-                    old_clock = self.clock
-                    self.clock = max(self.clock, msg['lamport_clock']) + 1
-                    print(f"[{self.sensor_id}] Notificado por {msg['sensor_id']}. Sincronizou: L={old_clock} -> L={self.clock}")
+                result = channel.queue_declare(queue='', exclusive=True)
+                queue_name = result.method.queue
+                channel.queue_bind(exchange='trafego_events', queue=queue_name)
 
-        channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)
-        try:
-            channel.start_consuming()
-        except Exception as e:
-            print(f"[{self.sensor_id}] Erro na conexão de consumo: {e}")
+                def callback(ch, method, properties, body):
+                    msg = json.loads(body)
+                    if msg.get("tipo") == "TIME_RESPONSE" and msg.get("sensor_id") == self.sensor_id:
+                        # Essa parte é o coração da sincronização: o sensor calcula
+                        # a metade do RTT e usa isso como estimativa do tempo do servidor.
+                        # Não é perfeito, mas é um jeito bem comum de aproximar relógios.
+                        t1 = self.get_local_time()
+                        t0 = msg["t0"]
+                        t_server = msg["t_server"]
+                        rtt = t1 - t0
+                        estimated_server_time = t_server + (rtt / 2)
+                        self.time_offset = estimated_server_time - t1
+                        print(f"[{self.sensor_id}] [CRISTIAN] Tempo sincronizado. Offset aplicado = {self.time_offset:.3f} (RTT={rtt:.3f}s)")
+                        return
+                    
+                    if msg.get("tipo") in ["TIME_REQUEST", "TIME_RESPONSE"]:
+                        return
+                        
+                    if msg.get('sensor_id') != self.sensor_id and 'lamport_clock' in msg:
+                        with self.lock:
+                            old_clock = self.clock
+                            self.clock = max(self.clock, msg['lamport_clock']) + 1
+                            print(f"[{self.sensor_id}] Notificado por {msg['sensor_id']}. Sincronizou: L={old_clock} -> L={self.clock}")
+
+                channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)
+                channel.start_consuming()
+            except Exception as e:
+                print(f"[{self.sensor_id}] Erro na conexão de consumo: {e}. Tentando reconectar...")
+                time.sleep(2)
 
     def produce(self):
-        connection, channel = self.get_connection_and_channel()
         eventos = ["Veículo detectado", "Bloqueio na via", "Semáforo ignorado"]
-        
         while True:
-            time.sleep(random.uniform(2, 6))
-            with self.lock:
-                self.clock += 1
-                msg = {
-                    "tipo": "evento",
-                    "sensor_id": self.sensor_id,
-                    "evento": random.choice(eventos),
-                    "lamport_clock": self.clock,
-                    "timestamp_real": self.get_synced_time()
-                }
             try:
-                channel.basic_publish(exchange='trafego_events', routing_key='', body=json.dumps(msg))
-                print(f"[{self.sensor_id}] Disparou Evento: {msg['evento']} (L={self.clock}, T_sync={msg['timestamp_real']:.2f})")
+                connection, channel = self.get_connection_and_channel()
+                while True:
+                    time.sleep(random.uniform(2, 6))
+                    with self.lock:
+                        self.clock += 1
+                        msg = {
+                            "tipo": "evento",
+                            "sensor_id": self.sensor_id,
+                            "evento": random.choice(eventos),
+                            "lamport_clock": self.clock,
+                            "timestamp_real": self.get_synced_time()
+                        }
+                    channel.basic_publish(exchange='trafego_events', routing_key='', body=json.dumps(msg))
+                    print(f"[{self.sensor_id}] Disparou Evento: {msg['evento']} (L={self.clock}, T_sync={msg['timestamp_real']:.2f})")
             except Exception as e:
-                print(f"[{self.sensor_id}] Erro ao publicar: {e}")
-                break
+                print(f"[{self.sensor_id}] Erro na publicação: {e}. Tentando reconectar...")
+                time.sleep(2)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

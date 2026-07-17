@@ -7,6 +7,9 @@ buffer = []
 lock = threading.Lock()
 
 def process_buffer():
+    # Esse observador faz uma coisa bem simples, mas importante:
+    # ele mostra como a ordem de chegada na rede pode ser diferente da ordem lógica.
+    # Em sistemas distribuídos isso é bem comum — e aí entra o relógio de Lamport.
     while True:
         time.sleep(10)
         with lock:
@@ -17,6 +20,8 @@ def process_buffer():
             print(" [PROVA DA ORDENAÇÃO CAUSAL] - PROCESSANDO BUFFER COM ATRASO FÍSICO")
             print("="*70)
             
+            # Ordena os eventos pelo relógio lógico de Lamport.
+            # O timestamp real vira desempate, tipo um "tiebreaker".
             buffer_ordenado = sorted(buffer, key=lambda x: (x['lamport_clock'], x['timestamp_real']))
             
             print(f"{'ORDEM DE CHEGADA':<20} | {'ORDEM LÓGICA (LAMPORT)':<25} | {'EVENTO'}")
@@ -30,6 +35,8 @@ def process_buffer():
 
 def callback(ch, method, properties, body):
     msg = json.loads(body)
+    if msg.get("tipo") in ["TIME_REQUEST", "TIME_RESPONSE"]:
+        return
     msg['chegada_real'] = time.strftime('%H:%M:%S', time.localtime())
     with lock:
         buffer.append(msg)
